@@ -1,0 +1,5 @@
+{
+    "embed_model":  "E:\\yap-map\\backend\\models\\hf\\models--sentence-transformers--all-MiniLM-L6-v2\\snapshots\\1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "gen_model":  "E:\\yap-map\\backend\\models\\hf\\models--google--flan-t5-small\\snapshots\\0fc9ddf78a1e988dac52e2dac162b0ede4fd74ab",
+    "vosk_model":  "E:\\yap-map\\backend\\models\\vosk\\vosk-model-en-us-0.22"
+}

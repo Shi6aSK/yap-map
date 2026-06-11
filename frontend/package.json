@@ -1,0 +1,27 @@
+{
+  "name": "yap-map-frontend",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "axios": "^1.4.0",
+    "reactflow": "^11.3.0",
+    "framer-motion": "^10.12.16",
+    "react-force-graph-2d": "*",
+    "d3-force": "^3.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.1.6",
+    "vite": "^5.2.0",
+    "@types/react": "^18.2.21",
+    "@types/react-dom": "^18.2.7",
+    "@vitejs/plugin-react": "^4.0.0"
+  }
+}
+

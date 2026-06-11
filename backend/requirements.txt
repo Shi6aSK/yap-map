@@ -1,0 +1,25 @@
+
+fastapi
+uvicorn[standard]
+sqlmodel
+networkx
+python-dotenv
+
+# Model and NLP tooling
+huggingface-hub
+sentence-transformers
+transformers
+keybert
+scikit-learn
+tqdm
+requests
+vosk
+spacy
+hnswlib
+onnxruntime
+soundfile
+pydub
+
+# (Optional heavy deps - install as needed)
+torch
+
