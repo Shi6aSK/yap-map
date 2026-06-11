@@ -32,7 +32,7 @@ YapMap turns spoken conversation into an evolving graph of concepts and claim-li
 
 ```mermaid
 graph LR
-	Browser[Browser / Frontend] -->|REST / WebSocket| Frontend(Frontend — Vite + React)
+	Browser[Browser / Frontend] -->|REST / WebSocket| Frontend[Frontend - Vite + React]
 	Frontend -->|HTTP / WebSocket| API(FastAPI backend)
 	subgraph Backend
 		API --> WS[WS / live_audio endpoint]
@@ -214,13 +214,6 @@ pytest -q
 - WebSocket
 	- `ws://<host>/ws/live/{session_id}` — real-time audio stream; messages: `session.start`, `audio.chunk`, `session.stop`; server sends `transcript.partial`, `transcript.final`, `graph.patch`, `processing.status` responses.
 
-
-## Notes for contributors
-
-- Keep large model artifacts out of Git. Use `backend/models/manifest.json` to point to local model directories. `.gitignore` already prevents committing `backend/models/`.
-- When changing merge behavior in the graph store, update the merge threshold in `backend/app/services/graph_store.py` (`MERGE_THRESHOLD`). Tests should cover deduplication cases.
-
-
 ## Files to review first
 
 - [backend/app/config.py](backend/app/config.py#L1-L200) — runtime settings
@@ -228,15 +221,3 @@ pytest -q
 - [backend/app/services/graph_store.py](backend/app/services/graph_store.py#L1-L400) — patch merging and persistence
 - [backend/app/services/local_models.py](backend/app/services/local_models.py#L1-L300) — embedding/generation loaders
 - [frontend/src/websocket/liveAudioSocket.ts](frontend/src/websocket/liveAudioSocket.ts#L1-L240) — client WS logic
-
-
----
-
-If you'd like, I can also:
-
-- add rendered PNG/SVG diagrams into `docs/` and link them from this README
-- create a minimal `Dockerfile` and `docker-compose.yml` for local development
-- generate an OpenAPI spec excerpt and an architecture PDF
-
-Tell me which additional artifacts you'd like and I'll add them.
-
