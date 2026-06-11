@@ -32,22 +32,22 @@ YapMap turns spoken conversation into an evolving graph of concepts and claim-li
 
 ```mermaid
 graph LR
-	Browser[Browser / Frontend] -->|REST / WebSocket| Frontend[Frontend - Vite + React]
-	Frontend -->|HTTP / WebSocket| API(FastAPI backend)
-	subgraph Backend
-		API --> WS[WS / live_audio endpoint]
-		WS --> TranscriberManager[Transcriber Manager]
-		TranscriberManager --> Vosk[VoskTranscriber]
-		TranscriberManager --> Mock[MockTranscriber]
-		TranscriberManager --> OpenAI[OpenAIRealtimeTranscriber (stub)]
-		TranscriberManager --> ConceptExtractor[ConceptExtractor]
-		ConceptExtractor --> GraphBuilder[GraphBuilder]
-		GraphBuilder --> GraphStore[Graph Store (SQLModel + DB)]
-		LocalModels[LocalModelManager: embeddings & generator] --> ConceptExtractor
-		LocalModels --> GraphBuilder
-	end
-	GraphStore -->|graph.patch| Frontend
-	note right of GraphStore: backend/models contains large model files; manifest at backend/models/manifest.json
+  Browser[Browser] -->|REST/WebSocket| Frontend[Frontend]
+  Frontend -->|HTTP/WebSocket| API[FastAPI]
+  subgraph Backend
+    API --> WS[WS_live_audio]
+    WS --> TranscriberMgr[TranscriberManager]
+    TranscriberMgr --> Vosk[VoskTranscriber]
+    TranscriberMgr --> Mock[MockTranscriber]
+    TranscriberMgr --> OpenAI[OpenAIRealtimeTranscriber]
+    TranscriberMgr --> ConceptExtractor[ConceptExtractor]
+    ConceptExtractor --> GraphBuilder[GraphBuilder]
+    GraphBuilder --> GraphStore[GraphStore]
+    LocalModels[LocalModels] --> ConceptExtractor
+    LocalModels --> GraphBuilder
+  end
+  GraphStore -->|graph.patch| Frontend
+  note right of GraphStore: backend/models contains large model files; manifest: backend/models/manifest.json
 ```
 
 
@@ -57,28 +57,28 @@ This sequence shows how a single live session (microphone) flows through the sys
 
 ```mermaid
 sequenceDiagram
-	participant Client as Browser
-	participant FE as Frontend
-	participant WS as FastAPI WebSocket
-	participant TR as Transcriber
-	participant CE as ConceptExtractor
-	participant GB as GraphBuilder
-	participant GS as GraphStore
+  participant Client as Browser
+  participant FE as Frontend
+  participant WS as WS_Server
+  participant TR as Transcriber
+  participant CE as ConceptExtractor
+  participant GB as GraphBuilder
+  participant GS as GraphStore
 
-	Client->>FE: start session (mic permission)
-	FE->>WS: session.start
-	loop streaming audio
-		FE->>WS: audio.chunk {dataBase64, sequence, mimeType}
-		WS->>TR: send_audio(bytes)
-		TR-->>WS: transcript.partial (partial text)
-		WS-->>FE: transcript.partial
-		TR-->>WS: transcript.final (final text)
-		WS->>CE: extract_concepts(final text)
-		CE->>GB: build_graph_patch(concepts)
-		GB->>GS: apply_graph_patch(session_id, patch)
-		GS-->>WS: canonical_patch
-		WS-->>FE: graph.patch (emitted to client)
-	end
+  Client->>FE: start session (mic permission)
+  FE->>WS: session.start
+  loop streaming audio
+    FE->>WS: audio.chunk {dataBase64, sequence, mimeType}
+    WS->>TR: send_audio(bytes)
+    TR-->>WS: transcript.partial
+    WS-->>FE: transcript.partial
+    TR-->>WS: transcript.final
+    WS->>CE: extract_concepts(final text)
+    CE->>GB: build_graph_patch(concepts)
+    GB->>GS: apply_graph_patch(session_id, patch)
+    GS-->>WS: canonical_patch
+    WS-->>FE: graph.patch
+  end
 ```
 
 
@@ -88,16 +88,16 @@ The `apply_graph_patch` logic attempts an in-place merge of incoming nodes/edges
 
 ```mermaid
 flowchart TD
-	Patch[Incoming graph.patch] --> Norm[Normalize labels]
-	Norm --> Exact[Exact match on normalized_label]
-	Exact -->|found| Merge[Merge segments, update importance, timestamps]
-	Exact -->|not found| Fuzzy[Fuzzy-match candidates (difflib.SequenceMatcher)]
-	Fuzzy -->|score >= threshold| Merge
-	Fuzzy -->|no match| Create[Create new node/edge (UUID)]
-	Merge --> Commit[DB commit & refresh]
-	Create --> Commit
-	Commit --> Canon[Query final persisted rows -> canonical patch]
-	Canon --> Return[Return canonical patch to caller]
+  Patch[Incoming patch] --> Norm[Normalize labels]
+  Norm --> Exact[Exact match]
+  Exact -->|found| Merge[Merge segments; update importance]
+  Exact -->|not found| Fuzzy[Fuzzy match - SequenceMatcher]
+  Fuzzy -->|score >= threshold| Merge
+  Fuzzy -->|no match| Create[Create new node/edge]
+  Merge --> Commit[DB commit and refresh]
+  Create --> Commit
+  Commit --> Canon[Query persisted rows]
+  Canon --> Return[Return canonical patch]
 ```
 
 
