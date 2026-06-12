@@ -32,8 +32,8 @@ YapMap turns spoken conversation into an evolving graph of concepts and claim-li
 
 ```mermaid
 graph LR
-  Browser[Browser] -->|REST/WebSocket| Frontend[Frontend]
-  Frontend -->|HTTP/WebSocket| API[FastAPI]
+  Browser[Browser] --> Frontend[Frontend]
+  Frontend --> API[FastAPI]
   subgraph Backend
     API --> WS[WS_live_audio]
     WS --> TranscriberMgr[TranscriberManager]
@@ -43,11 +43,8 @@ graph LR
     TranscriberMgr --> ConceptExtractor[ConceptExtractor]
     ConceptExtractor --> GraphBuilder[GraphBuilder]
     GraphBuilder --> GraphStore[GraphStore]
-    LocalModels[LocalModels] --> ConceptExtractor
-    LocalModels --> GraphBuilder
   end
-  GraphStore -->|graph.patch| Frontend
-  note right of GraphStore: backend/models contains large model files; manifest: backend/models/manifest.json
+  GraphStore --> Frontend
 ```
 
 
