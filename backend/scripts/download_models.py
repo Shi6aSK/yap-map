@@ -64,8 +64,14 @@ def main():
     manifest = {}
 
     hf_models = {
-        'embed_model': 'sentence-transformers/all-MiniLM-L6-v2',
-        'gen_model': 'google/flan-t5-small',
+        # bge-small-en-v1.5 (BAAI, 2023): notably better semantic-similarity/
+        # clustering quality than all-MiniLM-L6-v2 at a similar size/speed —
+        # sentence-transformers compatible drop-in replacement.
+        'embed_model': 'BAAI/bge-small-en-v1.5',
+        # Qwen2.5-0.5B-Instruct: modern (2024) small instruction-tuned causal LM.
+        # Much stronger instruction-following than flan-t5-small (2022,
+        # encoder-decoder) while still small/fast enough for local CPU inference.
+        'gen_model': 'Qwen/Qwen2.5-0.5B-Instruct',
     }
 
     for key, repo in hf_models.items():

@@ -94,6 +94,7 @@ export function createLiveAudioSocket(sessionId: string, onMessage: (ev: ServerL
 
   ws.addEventListener('open', () => {
     clearTimeout(openTimeout)
+    console.log('[WS] Socket opened, readyState:', ws.readyState)
     openResolve && openResolve()
     onMessage({ type: 'socket.open' })
   })
@@ -129,12 +130,16 @@ export function createLiveAudioSocket(sessionId: string, onMessage: (ev: ServerL
         dataBase64: base64,
       },
     }
+    console.log('[WS] Sending audio.chunk seq=' + sequence + ', size=' + base64.length + ' bytes')
     ws.send(JSON.stringify(msg))
   }
 
   async function sendSessionStart() {
     await ensureOpen()
-    ws.send(JSON.stringify({ type: 'session.start', payload: { mimeType: 'audio/pcm' } }))
+    const msg = { type: 'session.start', payload: { mimeType: 'audio/pcm' } }
+    console.log('[WS] Sending session.start, socket readyState:', ws.readyState)
+    ws.send(JSON.stringify(msg))
+    console.log('[WS] session.start sent')
   }
 
   async function sendSessionStop() {

@@ -27,6 +27,8 @@ export default function GraphCanvas() {
   const colorMapRef = useRef<Map<string, string>>(new Map())
   const neighborMapRef = useRef<Map<string, Set<string>>>(new Map())
   const degreeMapRef = useRef<Map<string, number>>(new Map())
+  // Persists backend UUID -> frontend label-based id across multiple graph.patch messages
+  const backendIdMapRef = useRef<Map<string, string>>(new Map())
   const [hoverNode, setHoverNode] = useState<any>(null)
   const [selectedNode, setSelectedNode] = useState<any>(null)
   const batchingRef = useRef<boolean>(false)
@@ -67,46 +69,20 @@ export default function GraphCanvas() {
       const msg = ev.detail
       if (!msg || !msg.type) return
 
-      if (msg.type === 'transcript.final') {
-        const seg = msg.payload
-        if (!seg || !seg.text) return
-        const topics = extractTopicsFromText(seg.text, 3)
-        if (topics.length === 0) return
-
-        for (const t of topics) {
-          const id = 'topic:' + slugify(t)
-          if (!nodesMap.current.has(id)) {
-            nodesMap.current.set(id, { id, label: t, __added: Date.now(), x: 0, y: 0 })
-          }
-        }
-
-        for (let i = 0; i < topics.length; i++) {
-          for (let j = i + 1; j < topics.length; j++) {
-            const a = 'topic:' + slugify(topics[i])
-            const b = 'topic:' + slugify(topics[j])
-            const key = [a, b].sort().join('__')
-            const prev = linksMap.current.get(key)
-            if (prev) prev.value += 1
-            else linksMap.current.set(key, { source: a, target: b, value: 1 })
-          }
-        }
-
-        setGraphData({ nodes: Array.from(nodesMap.current.values()), links: Array.from(linksMap.current.values()) })
-
-        // center & fit
-        try {
-          if (fgRef.current) {
-            fgRef.current.centerAt(0, 0, 300)
-            fgRef.current.zoomToFit(300, 40)
-          }
-        } catch (e) {}
-      }
+      // NOTE: We intentionally do NOT create graph nodes from raw 'transcript.final'
+      // text here anymore. Node creation is driven exclusively by backend 'graph.patch'
+      // events, which use semantic embedding-based topic clustering (TopicManager) and
+      // DB-level fuzzy merging (graph_store.py). Having the frontend independently
+      // extract naive n-gram "topics" from every final segment caused a flood of
+      // near-duplicate, unclustered, disconnected nodes.
 
       if (msg.type === 'graph.patch') {
         const patch = msg.payload || {}
         const added = patch.nodesAdded || []
-        // Map backend node IDs (UUIDs from DB) → frontend label-based IDs
-        const backendIdMap = new Map<string, string>()
+        // Map backend node IDs (UUIDs from DB) → frontend label-based IDs.
+        // Persisted across messages (ref) so edges referencing nodes added in
+        // earlier patches still resolve correctly.
+        const backendIdMap = backendIdMapRef.current
         const isUUIDLike = (v: string) => /[0-9a-f]{8}-[0-9a-f]{4}/i.test(v) || /^[0-9a-f]{10,}$/i.test(v.replace(/-/g, ''))
         // Reject labels that are clearly system/mock noise
         const isMockOrNoise = (label: string) => {
@@ -149,6 +125,34 @@ export default function GraphCanvas() {
           const prev = linksMap.current.get(key)
           if (prev) prev.value = Math.max(prev.value, be.value || be.weight || 1)
           else linksMap.current.set(key, { source: s, target: t, value: be.value || be.weight || 1 })
+        }
+
+        // Handle removals from reanalysis/reclustering passes on the backend
+        // (merged-away or pruned clusters). Nodes may be referenced either by
+        // backend UUID or by frontend label-based id.
+        const removedNodes = patch.nodesRemoved || []
+        for (const rn of removedNodes) {
+          const rawId = (typeof rn === 'string' ? rn : rn?.id || '').toString()
+          if (!rawId) continue
+          const resolved = backendIdMap.get(rawId) || rawId
+          nodesMap.current.delete(resolved)
+          backendIdMap.delete(rawId)
+          // drop any links referencing the removed node
+          for (const [key, l] of Array.from(linksMap.current.entries())) {
+            if (l.source === resolved || l.target === resolved) linksMap.current.delete(key)
+          }
+        }
+
+        const removedEdges = patch.edgesRemoved || []
+        for (const re of removedEdges) {
+          let rawS = (re.source || '').toString()
+          let rawT = (re.target || '').toString()
+          if (backendIdMap.has(rawS)) rawS = backendIdMap.get(rawS)!
+          if (backendIdMap.has(rawT)) rawT = backendIdMap.get(rawT)!
+          const s = rawS.startsWith('topic:') ? rawS : 'topic:' + slugify(rawS)
+          const t = rawT.startsWith('topic:') ? rawT : 'topic:' + slugify(rawT)
+          const key = [s, t].sort().join('__')
+          linksMap.current.delete(key)
         }
 
         setGraphData({ nodes: Array.from(nodesMap.current.values()), links: Array.from(linksMap.current.values()) })
@@ -247,27 +251,39 @@ export default function GraphCanvas() {
     colorMapRef.current = nodeColor
   }, [graphData])
 
-  // configure d3 forces to tighten clusters and scale link distance by weight
+  // configure d3 forces with tighter clustering, better spacing, and smoother layout
   useEffect(() => {
     try {
       if (!fgRef.current) return
-      const linkForce = forceLink().id((d: any) => d.id).distance((d: any) => {
-        const v = d.value || 1
-        return Math.max(30, 120 / Math.sqrt(v))
-      }).strength(0.9)
+      
+      // Better link force: responsive distance based on connection strength
+      const linkForce = forceLink()
+        .id((d: any) => d.id)
+        .distance((d: any) => {
+          const v = d.value || 1
+          // Stronger connections have shorter distances (pull closer)
+          return Math.max(25, 100 / Math.sqrt(v))
+        })
+        .strength(1.0) // Stronger attraction
 
-      const charge = forceManyBody().strength(-30)
-      const collide = forceCollide().radius((d: any) => {
-        const id = d.id
-        const deg = degreeMapRef.current.get(id) || 1
-        const base = 6 + Math.sqrt(deg) * 6
-        return base * 1.2
-      }).strength(0.9)
+      // Stronger repulsion to prevent overcrowding
+      const charge = forceManyBody().strength(-80).minDistance(10).maxDistance(500)
+      
+      // Better collision detection: larger radius for bigger nodes
+      const collide = forceCollide()
+        .radius((d: any) => {
+          const id = d.id
+          const deg = degreeMapRef.current.get(id) || 1
+          const base = 8 + Math.sqrt(deg) * 7
+          return base * 1.3 // Increased padding to prevent overlap
+        })
+        .strength(1.0)
+        .iterations(3) // Multiple iterations for better stability
 
       fgRef.current.d3Force('link', linkForce)
       fgRef.current.d3Force('charge', charge)
       fgRef.current.d3Force('collision', collide)
-      fgRef.current.d3Force('center', forceCenter(0, 0))
+      fgRef.current.d3Force('center', forceCenter(0, 0).strength(0.1))
       fgRef.current.d3ReheatSimulation()
     } catch (e) {}
   }, [graphData])
@@ -286,36 +302,89 @@ export default function GraphCanvas() {
   const drawNode = (node: TopicNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const id = node.id
     const degree = Math.max(1, degreeMapRef.current.get(id) || 1)
-    const baseSize = 3 + Math.sqrt(degree) * 3
-    const size = baseSize / globalScale
+    const baseSize = 4 + Math.sqrt(degree) * 4
+    const size = baseSize / Math.max(0.5, globalScale)
     const color = colorMapRef.current.get(id) || 'hsl(200,60%,60%)'
+    const isHovered = (hoverNode && hoverNode.id === id)
+    const isSelected = (selectedNode && selectedNode.id === id)
 
     ctx.save()
-    // glow
+    
+    // Main node circle with glow effect
+    if (isHovered || isSelected) {
+      // Strong glow for hovered/selected
+      ctx.beginPath()
+      ctx.shadowBlur = 16
+      ctx.shadowColor = color
+      ctx.globalAlpha = 0.4
+      ctx.fillStyle = color
+      ctx.arc(node.x, node.y, size * 1.5, 0, Math.PI * 2, false)
+      ctx.fill()
+    }
+    
+    ctx.shadowBlur = 0
+    ctx.globalAlpha = 1.0
     ctx.beginPath()
-    ctx.shadowBlur = 8
+    ctx.shadowBlur = 6
     ctx.shadowColor = color
     ctx.fillStyle = color
     ctx.arc(node.x, node.y, size, 0, Math.PI * 2, false)
     ctx.fill()
-    ctx.shadowBlur = 0
 
-    // stroke for depth
-    ctx.lineWidth = (hoverNode && hoverNode.id === id) || (selectedNode && selectedNode.id === id) ? 2 : 0.6
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)'
+    // Highlight ring for interactive states
+    ctx.lineWidth = (isHovered || isSelected) ? 3 : 1.5
+    ctx.strokeStyle = isHovered ? 'rgba(255,255,255,0.8)' : (isSelected ? 'rgba(255,200,100,0.6)' : 'rgba(255,255,255,0.3)')
     ctx.beginPath()
     ctx.arc(node.x, node.y, size, 0, Math.PI * 2, false)
     ctx.stroke()
 
-    // always show label and scale it with node degree (bigger topics -> larger labels)
-    const degVal = Math.max(1, degreeMapRef.current.get(id) || 1)
-    const fontSize = Math.max(12, (baseSize * 1.6) / Math.max(0.6, globalScale))
-    ctx.font = `${fontSize}px Inter, Arial`
-    ctx.fillStyle = '#fff'
+    // Label rendering: near-invisible by default, fully revealed on hover/select.
+    // This declutters dense graphs — labels only "pop in" when the user is
+    // actually interested in a specific node.
+    const isImportantHub = degree >= 6 // always show a faint hint for major hub nodes
+    const labelAlpha = isHovered || isSelected ? 1.0 : (isImportantHub ? 0.16 : 0.05)
+
+    const baseFontSize = Math.max(11, (baseSize * 1.8) / Math.max(0.5, globalScale))
+    const fontSize = isHovered || isSelected ? baseFontSize * 1.15 : baseFontSize
+    const labelLines = node.label.length > 20 ? node.label.split(/\s+/).reduce((acc: string[], word: string) => {
+      if (!acc.length) return [word]
+      const lastLen = acc[acc.length - 1].length
+      if (lastLen + word.length + 1 > 15) return [...acc, word]
+      acc[acc.length - 1] += ' ' + word
+      return acc
+    }, []) : [node.label]
+    
+    ctx.shadowBlur = 0
+    ctx.font = `bold ${fontSize}px Inter, Arial, sans-serif`
     ctx.textAlign = 'center'
-    // draw label just above the dot
-    ctx.textBaseline = 'bottom'
-    ctx.fillText(node.label, node.x, (node.y || 0) - size - 6)
+    ctx.textBaseline = 'middle'
+    
+    // Measure text to draw background
+    const lineHeight = fontSize * 1.25
+    const maxWidth = Math.max(...labelLines.map(line => ctx.measureText(line).width)) + 12
+    const totalHeight = labelLines.length * lineHeight + 8
+    const labelY = (node.y || 0) - size - 8 - (totalHeight / 2)
+    
+    // Draw semi-transparent background for text (only meaningful when visible)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.65)'
+    ctx.globalAlpha = labelAlpha
+    roundRect(ctx, (node.x || 0) - maxWidth / 2, labelY - totalHeight / 2, maxWidth, totalHeight, 4)
+    ctx.fill()
+    
+    // Draw border around label background
+    ctx.strokeStyle = color
+    ctx.lineWidth = 1
+    ctx.globalAlpha = labelAlpha * 0.6
+    ctx.stroke()
+    
+    // Draw text with better contrast
+    ctx.fillStyle = '#fff'
+    ctx.globalAlpha = labelAlpha
+    for (let i = 0; i < labelLines.length; i++) {
+      const yOffset = labelY - ((labelLines.length - 1) * lineHeight) / 2 + i * lineHeight
+      ctx.fillText(labelLines[i], node.x, yOffset)
+    }
+    ctx.globalAlpha = 1.0
 
     ctx.restore()
   }
@@ -334,8 +403,12 @@ export default function GraphCanvas() {
     ctx.save()
     ctx.beginPath()
     ctx.strokeStyle = gradient
-    ctx.globalAlpha = 0.45
-    ctx.lineWidth = Math.max(1, (0.4 + Math.log((link.value || 1) + 1) * 0.7) / globalScale)
+    // Better visibility: stronger connections are more opaque
+    const linkStrength = link.value || 1
+    ctx.globalAlpha = Math.min(0.6, 0.25 + Math.log(linkStrength + 1) * 0.15)
+    ctx.lineWidth = Math.max(0.5, (0.5 + Math.log(linkStrength + 1) * 0.8) / Math.max(0.5, globalScale))
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
     ctx.moveTo(source.x || 0, source.y || 0)
     ctx.lineTo(target.x || 0, target.y || 0)
     ctx.stroke()

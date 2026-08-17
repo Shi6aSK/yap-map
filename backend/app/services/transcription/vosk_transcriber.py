@@ -57,6 +57,7 @@ class VoskTranscriber(BaseTranscriber):
             return
 
         logger = logging.getLogger(__name__)
+        logger.info('send_audio: mime_type=%s, size=%d bytes', mime_type, len(audio_bytes))
 
         # infer a likely format from the mime type
         fmt = None
@@ -117,24 +118,31 @@ class VoskTranscriber(BaseTranscriber):
         # feed to recognizer in chunks
         chunk_size = 4000
         offset = 0
+        logger.info('Feeding %d bytes to Vosk in %d-byte chunks', len(raw), chunk_size)
+        chunk_count = 0
         while offset < len(raw):
             end = min(offset + chunk_size, len(raw))
             chunk = raw[offset:end]
+            chunk_count += 1
             try:
                 accepted = self.recognizer.AcceptWaveform(chunk)
                 if accepted:
                     res = json.loads(self.recognizer.Result())
                     text = res.get('text', '').strip()
+                    logger.info('Vosk final result (chunk %d): "%s"', chunk_count, text)
                     if text:
                         await self._q.put(TranscriptEvent(type='final', text=text))
                 else:
                     part = json.loads(self.recognizer.PartialResult())
                     ptext = part.get('partial', '').strip()
                     if ptext:
+                        logger.debug('Vosk partial result (chunk %d): "%s"', chunk_count, ptext)
                         await self._q.put(TranscriptEvent(type='partial', text=ptext))
             except Exception as exc:
+                logger.error('Vosk recognizer error on chunk %d: %s', chunk_count, exc)
                 await self._q.put(TranscriptEvent(type='error', text=f'recognizer_error: {exc}'))
             offset = end
+        logger.info('Finished feeding %d chunks to Vosk', chunk_count)
 
     async def events(self) -> AsyncIterator[TranscriptEvent]:
         while not self._closed:

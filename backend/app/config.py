@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     DATABASE_URL: str = "sqlite:///./yapmap.db"
     FRONTEND_ORIGIN: str = "http://localhost:5173"
-    TRANSCRIPTION_PROVIDER: str = "mock"
+    TRANSCRIPTION_PROVIDER: str = "vosk"
     OPENAI_API_KEY: str = ""
     AUDIO_CHUNK_MS: int = 500
     MAX_UPLOAD_MB: int = 500

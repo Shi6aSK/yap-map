@@ -52,30 +52,57 @@ class LocalModelManager:
     def load_generator_pipeline(self):
         if self._pipeline is None:
             try:
-                from transformers import pipeline
+                from transformers import pipeline, AutoModelForSeq2SeqLM, AutoTokenizer
                 path = self.gen_model_path()
-                # Prefer explicitly disabling remote code execution when supported.
+                # Try using text-generation for newer transformers versions
                 try:
                     if path and Path(path).exists():
-                        # load pipeline from local directory (disable remote code execution)
-                        self._pipeline = pipeline('text2text-generation', model=path, tokenizer=path, device=-1, trust_remote_code=False)
+                        self._pipeline = pipeline('text-generation', model=path, tokenizer=path, device=-1, trust_remote_code=False)
                     else:
-                        # fallback to HF model id (this may download)
-                        self._pipeline = pipeline('text2text-generation', model='google/flan-t5-small', device=-1, trust_remote_code=False)
-                except TypeError:
-                    # older transformers versions may not accept `trust_remote_code`; fall back safely
-                    if path and Path(path).exists():
-                        self._pipeline = pipeline('text2text-generation', model=path, tokenizer=path, device=-1)
-                    else:
-                        self._pipeline = pipeline('text2text-generation', model='google/flan-t5-small', device=-1)
+                        self._pipeline = pipeline('text-generation', model='google/flan-t5-small', device=-1, trust_remote_code=False)
+                except Exception as ex1:
+                    # Fall back to loading model directly if pipeline fails
+                    try:
+                        if path and Path(path).exists():
+                            model = AutoModelForSeq2SeqLM.from_pretrained(path, trust_remote_code=False)
+                            tokenizer = AutoTokenizer.from_pretrained(path)
+                        else:
+                            model = AutoModelForSeq2SeqLM.from_pretrained('google/flan-t5-small', trust_remote_code=False)
+                            tokenizer = AutoTokenizer.from_pretrained('google/flan-t5-small')
+                        self._pipeline = (model, tokenizer)
+                    except TypeError:
+                        # Older transformers without trust_remote_code
+                        if path and Path(path).exists():
+                            self._pipeline = (AutoModelForSeq2SeqLM.from_pretrained(path), AutoTokenizer.from_pretrained(path))
+                        else:
+                            self._pipeline = (AutoModelForSeq2SeqLM.from_pretrained('google/flan-t5-small'), AutoTokenizer.from_pretrained('google/flan-t5-small'))
             except Exception as exc:
                 raise RuntimeError(f'Failed to load generator pipeline: {exc}')
         return self._pipeline
 
     def generate(self, prompt: str, max_length: int = 64, num_return_sequences: int = 1):
         pipe = self.load_generator_pipeline()
-        outs = pipe(prompt, max_length=max_length, num_return_sequences=num_return_sequences)
-        return [o.get('generated_text') for o in outs]
+        
+        # Use max_new_tokens (modern transformers standard) instead of max_length
+        max_new_tokens = max_length
+        
+        # Handle both pipeline object and (model, tokenizer) tuple
+        if isinstance(pipe, tuple):
+            model, tokenizer = pipe
+            from transformers import GenerationConfig
+            # Create explicit generation config to avoid conflicts with model's defaults
+            gen_config = GenerationConfig(
+                max_new_tokens=max_new_tokens,
+                num_return_sequences=num_return_sequences,
+                do_sample=False
+            )
+            inputs = tokenizer(prompt, return_tensors="pt", truncation=True)
+            outputs = model.generate(**inputs, generation_config=gen_config)
+            return [tokenizer.decode(output, skip_special_tokens=True) for output in outputs]
+        else:
+            # It's a pipeline object
+            outs = pipe(prompt, max_new_tokens=max_new_tokens, num_return_sequences=num_return_sequences)
+            return [o.get('generated_text') for o in outs]
 
 
 __all__ = ['LocalModelManager']

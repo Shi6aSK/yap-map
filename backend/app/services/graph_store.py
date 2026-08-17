@@ -35,8 +35,45 @@ def apply_graph_patch(session_id: str, patch: Dict[str, List[Dict[str, Any]]]) -
     """
     nodes_added = patch.get('nodesAdded', []) or []
     edges_added = patch.get('edgesAdded', []) or []
+    nodes_removed = patch.get('nodesRemoved', []) or []
+    edges_removed = patch.get('edgesRemoved', []) or []
 
     id_map: Dict[str, str] = {}  # original_id -> persisted_id
+    removed_node_ids: List[str] = []
+    removed_edge_ids: List[str] = []
+
+    if nodes_removed:
+        with Session(engine) as db:
+            for raw in nodes_removed:
+                nid = raw if isinstance(raw, str) else (raw or {}).get('id')
+                if not nid:
+                    continue
+                node = db.get(GraphNode, nid)
+                if not node:
+                    continue
+                # drop edges attached to this node first (avoid orphaned FKs)
+                stmt = select(GraphEdge).where(
+                    GraphEdge.session_id == session_id,
+                    (GraphEdge.source == nid) | (GraphEdge.target == nid),
+                )
+                for e in db.exec(stmt).all():
+                    removed_edge_ids.append(e.id)
+                    db.delete(e)
+                db.delete(node)
+                db.commit()
+                removed_node_ids.append(nid)
+
+    if edges_removed:
+        with Session(engine) as db:
+            for raw in edges_removed:
+                eid = raw if isinstance(raw, str) else (raw or {}).get('id')
+                if not eid:
+                    continue
+                edge = db.get(GraphEdge, eid)
+                if edge:
+                    removed_edge_ids.append(edge.id)
+                    db.delete(edge)
+                    db.commit()
 
     with Session(engine) as db:
         # handle node additions (merge or create)
@@ -192,4 +229,6 @@ def apply_graph_patch(session_id: str, patch: Dict[str, List[Dict[str, Any]]]) -
         'nodesUpdated': [],
         'edgesAdded': canonical_edges,
         'edgesUpdated': [],
+        'nodesRemoved': list(dict.fromkeys(removed_node_ids)),
+        'edgesRemoved': list(dict.fromkeys(removed_edge_ids)),
     }

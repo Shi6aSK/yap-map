@@ -33,6 +33,7 @@ export default function GraphReplay({ session, onBack }: Props) {
 
   const colorMapRef = useRef<Map<string, string>>(new Map())
   const degreeMapRef = useRef<Map<string, number>>(new Map())
+  const [hoverNode, setHoverNode] = useState<any>(null)
   const playRef = useRef(false)
   const rafRef = useRef(0)
   const lastRealRef = useRef(0)
@@ -128,16 +129,36 @@ export default function GraphReplay({ session, onBack }: Props) {
     const base = 3 + Math.sqrt(degree) * 3
     const size = base / Math.max(0.5, gs)
     const color = colorMapRef.current.get(node.id) || 'hsl(200,60%,60%)'
+    const isHovered = hoverNode && hoverNode.id === node.id
     ctx.save()
     ctx.shadowBlur = 8; ctx.shadowColor = color; ctx.fillStyle = color
     ctx.beginPath(); ctx.arc(node.x || 0, node.y || 0, size, 0, Math.PI * 2); ctx.fill()
     ctx.shadowBlur = 0
-    const fs = Math.max(11, (base * 1.6) / Math.max(0.6, gs))
-    ctx.font = `${fs}px Inter,Arial`; ctx.fillStyle = '#fff'
+    if (isHovered) {
+      ctx.lineWidth = 2.5
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)'
+      ctx.beginPath(); ctx.arc(node.x || 0, node.y || 0, size, 0, Math.PI * 2); ctx.stroke()
+    }
+
+    // Labels stay nearly transparent until hovered, mirroring the live graph view.
+    const isImportantHub = degree >= 6
+    const labelAlpha = isHovered ? 1.0 : (isImportantHub ? 0.16 : 0.05)
+    const fs = Math.max(11, (base * 1.6) / Math.max(0.6, gs)) * (isHovered ? 1.15 : 1)
+    ctx.font = `${isHovered ? 'bold ' : ''}${fs}px Inter,Arial`
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'
+    ctx.globalAlpha = labelAlpha
+    if (isHovered) {
+      const label = node.label || node.id
+      const w = ctx.measureText(label).width + 10
+      const h = fs + 6
+      ctx.fillStyle = 'rgba(0,0,0,0.65)'
+      ctx.fillRect((node.x || 0) - w / 2, (node.y || 0) - size - 6 - h, w, h)
+    }
+    ctx.fillStyle = '#fff'
     ctx.fillText(node.label || node.id, node.x || 0, (node.y || 0) - size - 4)
+    ctx.globalAlpha = 1.0
     ctx.restore()
-  }, [])
+  }, [hoverNode])
 
   const drawLink = useCallback((link: any, ctx: CanvasRenderingContext2D, gs: number) => {
     const src = link.source, tgt = link.target
@@ -166,6 +187,7 @@ export default function GraphReplay({ session, onBack }: Props) {
         linkCanvasObjectMode={() => 'replace'}
         linkWidth={() => 0}
         linkColor={() => 'rgba(0,0,0,0)'}
+        onNodeHover={(node) => setHoverNode(node)}
         autoPauseRedraw={false}
         d3VelocityDecay={0.3}
         width={dims.width}
